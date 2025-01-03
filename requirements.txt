@@ -1,0 +1,4 @@
+aiocqhttp>=1.4.4
+aiohttp>=3.8.5
+beautifulsoup4>=4.12.2
+loguru>=0.7.0
