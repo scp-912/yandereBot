@@ -123,9 +123,13 @@ class ConfigManager:
                 return False
 
             nsfw_rating = self.get('Filter', 'nsfw_rating', 's')
-            if nsfw_rating not in ['s', 'q', 'e']:
-                logger.warning("无效的NSFW评分")
+            if nsfw_rating not in ['s', 'q', 'e', 'e+']:
+                logger.warning(f"无效的NSFW分级设置: {nsfw_rating}，将使用默认值's'")
+                self.config.set('Filter', 'nsfw_rating', 's')
                 return False
+
+            return True
+
 
             response_mode = self.get('Commands', 'group_response_mode', 'all')
             if response_mode not in ['all', 'white', 'black']:
