@@ -61,7 +61,21 @@ async def fetch_image_id(tag: str) -> int:
     
     # 根据配置添加NSFW过滤
     if config.getboolean('Filter', 'filter_nsfw'):
-        url += f"+rating:{config.get('Filter', 'nsfw_rating')}"
+        nsfw_rating = config.get('Filter', 'nsfw_rating')
+        # 定义分级层次和对应的允许等级
+        rating_filters = {
+            's': ['s'],              # 仅safe
+            'q': ['s', 'q'],         # safe和questionable
+            'e': ['s', 'q', 'e'],    # 所有分级
+            'e+': ['e']              # 仅explicit
+        }
+        
+        allowed_ratings = rating_filters.get(nsfw_rating, ['s'])
+        # 构建rating过滤器
+        rating_query = ' OR '.join([f'rating:{r}' for r in allowed_ratings])
+        url += f"+({rating_query})"
+        
+        logger.info(f"分级过滤: 当前级别 {nsfw_rating}, 允许的分级 {allowed_ratings}")
     
     headers = {
         'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
@@ -82,9 +96,18 @@ async def fetch_image_id(tag: str) -> int:
             if not data_list:
                 raise ValueError("未找到符合条件的图片")
             
+            # 过滤图片确保符合分级要求
+            if config.getboolean('Filter', 'filter_nsfw'):
+                filtered_list = [img for img in data_list 
+                               if img.get('rating') in allowed_ratings]
+                if not filtered_list:
+                    raise ValueError(f"未找到符合分级要求的图片 (当前分级设置: {nsfw_rating})")
+                data_list = filtered_list
+            
             random_image = random.choice(data_list)
+            logger.info(f"选中图片: ID={random_image['id']}, 分级={random_image.get('rating')}")
             return random_image['id']
-
+            
 async def fetch_images_and_convert_to_base64url(image_id: int) -> list:
     """获取图片并转换为base64格式"""
     detail_url = f"{config.get('API', 'base_url')}/post/show/{image_id}"
