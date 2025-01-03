@@ -35,6 +35,7 @@ class ConfigManager:
         },
         'Commands': {
             'random_image_keyword': '随机图片',
+            'image_by_id_keyword': '图片',
             'group_response_mode': 'all',
             'white_list_groups': '',
             'black_list_groups': ''
