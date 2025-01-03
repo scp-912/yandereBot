@@ -233,16 +233,6 @@ async def handle_group_message(event: Event):
                         # 构建消息
                         message = []
                         
-                        # 添加分级提示
-                        rating_text = {
-                            's': '【全年龄】',
-                            'q': '【较安全】',
-                            'e': '【限制级】'
-                        }.get(rating, '')
-                        
-                        if rating_text:
-                            message.append(MessageSegment.text(f"{rating_text}\n"))
-                        
                         # 添加图片
                         for base64_url in base64_urls:
                             message.append(MessageSegment.image(base64_url))
