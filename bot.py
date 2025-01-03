@@ -59,34 +59,41 @@ async def fetch_image_id(tag: str):
     """获取图片ID"""
     url = f"{config.get('API', 'base_url')}/post?tags={tag}+"
     
-    # 如果开启了NSFW过滤，添加分级过滤
-    if config.getboolean('Filter', 'filter_nsfw'):
-        url += f"+rating:{config.get('Filter', 'nsfw_rating')}"
+    # 添加分级过滤
+    rating = config.get('Filter', 'nsfw_rating', 's')
+    if rating != 'e+':  # e+ 为特殊模式，只显示explicit内容
+        if rating == 'e':
+            # e 模式显示所有内容，不添加过滤
+            pass
+        elif rating == 'q':
+            url += "+(-rating:e)"  # 排除explicit内容
+        elif rating == 's':
+            url += "+rating:s"     # 只显示safe内容
+    else:
+        url += "+rating:e"  # 只显示explicit内容
     
     headers = {
         'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8,zh-TW;q=0.7',
         'user-agent': config.get('API', 'user_agent')
     }
     
-    proxy = None
-    if config.getboolean('Proxy', 'enable'):
-        proxy = config.get('Proxy', 'http')
+    proxy = config.get('Proxy', 'http') if config.getboolean('Proxy', 'enable') else None
     
     async with aiohttp.ClientSession() as session:
         async with session.get(url, headers=headers, proxy=proxy) as response:
             page = await response.text()
             soup = BeautifulSoup(page, 'html.parser')
             script_tag = soup.find('script', {'class': 'js-preload-posts', 'type': 'application/json'})
-            if not script_tag:
-                raise ValueError(config.get('Message', 'error_message').format(tag=tag))
+            
+            if not script_tag or not script_tag.string:
+                raise ValueError("未找到图片数据")
             
             data_list = json.loads(script_tag.string)
             if not data_list:
-                raise ValueError(config.get('Message', 'error_message').format(tag=tag))
+                raise ValueError(f"未找到关于 {tag} 的图片")
             
             random_image = random.choice(data_list)
-            return random_image['id']
+            return random_image['id'],random_image.get('rating', 'unknown')
 
 async def fetch_images_and_convert_to_base64url(image_id: int):
     """获取图片并转换为base64"""
@@ -134,34 +141,59 @@ async def handle_group_message(event: Event):
     logger.info(f"收到消息: {msg}, 来自用户: {user_id}, 群组: {group_id}")
     
     # 检查群组权限
-    if not check_group_permission(group_id):
-        return
+    if config.get('Commands', 'group_response_mode') != 'all':
+        if config.get('Commands', 'group_response_mode') == 'white':
+            white_list = config.get('Commands', 'white_list_groups').split(',')
+            if str(group_id) not in white_list:
+                return
+        else:  # black mode
+            black_list = config.get('Commands', 'black_list_groups').split(',')
+            if str(group_id) in black_list:
+                return
     
     keyword = config.get('Commands', 'random_image_keyword')
     if keyword in msg:
-        # 检查请求频率
-        if not check_rate_limit(user_id):
-            await bot.send(event, "请求过于频繁，请稍后再试")
-            return
-        
         parts = msg.split(keyword)
         if len(parts) > 1:
             tag = parts[1].strip()
             if tag:
+                # 检查冷却时间
+                now = datetime.now()
+                if user_id in user_cooldowns:
+                    last_time = user_cooldowns[user_id]
+                    if (now - last_time).seconds < config.getint('Limits', 'cooldown', 60):
+                        await bot.send(event, f"冲太快了，请等待 {config.getint('Limits', 'cooldown', 60) - (now - last_time).seconds} 秒后再试")
+                        return
+                
+                # 发送开始搜索的提示
+                await bot.send(event, f"正在寻找「{tag}」的图片...")
+                
                 try:
-                    image_id = await fetch_image_id(tag)
+                    # 记录请求时间
+                    user_cooldowns[user_id] = now
+                    
+                    image_id, rating = await fetch_image_id(tag)
                     base64_urls = await fetch_images_and_convert_to_base64url(image_id)
                     
                     if base64_urls:
                         # 构建消息
                         message = []
-                        if config.getboolean('Message', 'show_safe_mode_mark') and \
-                           config.getboolean('Filter', 'filter_nsfw'):
-                            message.append(MessageSegment.text("【安全模式】\n"))
                         
+                        # 添加分级提示
+                        rating_text = {
+                            's': '【全年龄】',
+                            'q': '【较安全】',
+                            'e': '【限制级】'
+                        }.get(rating, '')
+                        
+                        if rating_text:
+                            message.append(MessageSegment.text(f"{rating_text}\n"))
+                        
+                        # 添加图片
                         for base64_url in base64_urls:
                             message.append(MessageSegment.image(base64_url))
                         
+                        # 添加图片信息
                         if config.getboolean('Message', 'show_image_info'):
                             message.append(MessageSegment.text(f"\n标签: {tag}\nID: {image_id}"))
                         
