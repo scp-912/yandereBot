@@ -209,8 +209,20 @@ async def handle_group_message(event: Event):
     if keyword in msg:
         parts = msg.split(keyword)
         if len(parts) > 1:
-            tag = parts[1].strip()
-            if tag:
+            # 处理标签字符串：支持中英文逗号
+            tags_str = parts[1].strip()
+            if tags_str:
+                # 将中文逗号替换为英文逗号，然后分割
+                tags = [tag.strip() for tag in tags_str.replace('，', ',').split(',')]
+                # 过滤掉空标签
+                tags = [tag for tag in tags if tag]
+                
+                if not tags:
+                    return
+                
+                # 将多个标签组合成一个搜索字符串
+                combined_tag = '+'.join(tags)
+                
                 # 检查冷却时间
                 now = datetime.now()
                 if user_id in user_cooldowns:
@@ -220,13 +232,13 @@ async def handle_group_message(event: Event):
                         return
                 
                 # 发送开始搜索的提示
-                await bot.send(event, f"正在寻找「{tag}」的图片...")
+                await bot.send(event, f"正在寻找「{' + '.join(tags)}」的图片...")
                 
                 try:
                     # 记录请求时间
                     user_cooldowns[user_id] = now
                     
-                    image_id, rating = await fetch_image_id(tag)
+                    image_id, rating = await fetch_image_id(combined_tag)
                     base64_urls = await fetch_images_and_convert_to_base64url(image_id)
                     
                     if base64_urls:
@@ -239,15 +251,15 @@ async def handle_group_message(event: Event):
                         
                         # 添加图片信息
                         if config.getboolean('Message', 'show_image_info'):
-                            message.append(MessageSegment.text(f"\n标签: {tag}\nID: {image_id}"))
+                            message.append(MessageSegment.text(f"\n标签: {' + '.join(tags)}\nID: {image_id}"))
                         
                         await bot.send(event, message)
                     else:
-                        await bot.send(event, config.get('Message', 'error_message').format(tag=tag))
+                        await bot.send(event, config.get('Message', 'error_message').format(tag=' + '.join(tags)))
                 except Exception as e:
                     logger.error(f"处理图片时出错: {e}")
-                    await bot.send(event, config.get('Message', 'error_message').format(tag=tag))
-
+                    await bot.send(event, config.get('Message', 'error_message').format(tag=' + '.join(tags)))
+                    
 if __name__ == "__main__":
     bot.run(
         host=config.get('Bot', 'host'),
