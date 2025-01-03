@@ -55,22 +55,63 @@ def check_rate_limit(user_id: int) -> bool:
     user_cooldowns[user_id].append(now)
     return True
 
-async def fetch_image_id(tag: str):
-    """获取图片ID"""
+async def get_total_pages(tag: str) -> int:
+    """获取指定tag的总页数"""
     url = f"{config.get('API', 'base_url')}/post?tags={tag}+"
+    
+    # 添加分级过滤（与 fetch_image_id 函数相同的过滤逻辑）
+    rating = config.get('Filter', 'nsfw_rating', 's')
+    if rating != 'e+':
+        if rating == 'e':
+            pass
+        elif rating == 'q':
+            url += "+(-rating:e)"
+        elif rating == 's':
+            url += "+rating:s"
+    else:
+        url += "+rating:e"
+    
+    headers = {
+        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'user-agent': config.get('API', 'user_agent')
+    }
+    
+    proxy = config.get('Proxy', 'http') if config.getboolean('Proxy', 'enable') else None
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, headers=headers, proxy=proxy) as response:
+            page = await response.text()
+            soup = BeautifulSoup(page, 'html.parser')
+            
+            # 查找分页信息
+            pagination = soup.find('div', {'class': 'pagination'})
+            if pagination:
+                # 找到最后一页的链接
+                last_page = pagination.find_all('a')[-2].text
+                return int(last_page)
+            return 1  # 如果没有分页，说明只有一页
+
+async def fetch_image_id(tag: str):
+    """获取图片ID（修改版）"""
+    # 首先获取总页数
+    total_pages = await get_total_pages(tag)
+    
+    # 随机选择一页
+    random_page = random.randint(1, total_pages)
+    
+    url = f"{config.get('API', 'base_url')}/post?tags={tag}+&page={random_page}"
     
     # 添加分级过滤
     rating = config.get('Filter', 'nsfw_rating', 's')
-    if rating != 'e+':  # e+ 为特殊模式，只显示explicit内容
+    if rating != 'e+':
         if rating == 'e':
-            # e 模式显示所有内容，不添加过滤
             pass
         elif rating == 'q':
-            url += "+(-rating:e)"  # 排除explicit内容
+            url += "+(-rating:e)"
         elif rating == 's':
-            url += "+rating:s"     # 只显示safe内容
+            url += "+rating:s"
     else:
-        url += "+rating:e"  # 只显示explicit内容
+        url += "+rating:e"
     
     headers = {
         'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
@@ -93,7 +134,8 @@ async def fetch_image_id(tag: str):
                 raise ValueError(f"未找到关于 {tag} 的图片")
             
             random_image = random.choice(data_list)
-            return random_image['id'],random_image.get('rating', 'unknown')
+            return random_image['id'], random_image.get('rating', 'unknown')
+
 
 async def fetch_images_and_convert_to_base64url(image_id: int):
     """获取图片并转换为base64"""
@@ -107,7 +149,9 @@ async def fetch_images_and_convert_to_base64url(image_id: int):
         proxy = config.get('Proxy', 'http')
     
     base64_urls = []
-    async with aiohttp.ClientSession() as session:
+    timeout = aiohttp.ClientTimeout(total=config.getint('Limits', 'request_timeout', 30))
+    
+    async with aiohttp.ClientSession(timeout=timeout) as session:
         async with session.get(detail_url, headers=headers, proxy=proxy) as response:
             page = await response.text()
             script_tag = next((t for t in page.splitlines() if 'Post.register_resp' in t), None)
@@ -115,16 +159,26 @@ async def fetch_images_and_convert_to_base64url(image_id: int):
                 data_dict = json.loads(script_tag.replace('<script type="text/javascript"> Post.register_resp(', '')
                                      .replace('); </script>', ''))
                 
-                file_urls = [post['file_url'] for post in data_dict.get('posts', [])]
+                # 优先使用较小的预览图
+                file_urls = []
+                for post in data_dict.get('posts', []):
+                    # 优先使用 sample_url（中等大小），如果没有则使用 file_url
+                    url = post.get('sample_url') or post.get('file_url')
+                    if url:
+                        file_urls.append(url)
+                
                 for file_url in file_urls:
                     try:
                         async with session.get(file_url, headers=headers, proxy=proxy) as image_response:
                             if image_response.status == 200:
                                 image_data = await image_response.read()
-                                # 检查文件大小限制
-                                if len(image_data) <= config.getint('Limits', 'max_file_size'):
+                                max_size = config.getint('Limits', 'max_file_size')
+                                
+                                if len(image_data) <= max_size:
                                     base64_encoded = base64.b64encode(image_data).decode('utf-8')
                                     base64_urls.append(f"base64://{base64_encoded}")
+                                else:
+                                    logger.warning(f"图片大小超过限制: {len(image_data)} > {max_size}")
                     except Exception as e:
                         logger.error(f"获取图片失败: {e}")
                         continue
