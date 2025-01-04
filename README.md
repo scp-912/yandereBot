@@ -6,6 +6,10 @@
 
 **yandereBot** 是一个用来从 [Yandere](https://yande.re) 网站爬取图片的机器人。主要使用 Python 编写。
 
+### 可用tag
+https://cdn.jsdelivr.net/gh/asadahimeka/danbooru_tags_json@main/json/_tags_translate_cn.json
+**WIP**计划之后支持中文模糊tag
+
 ## 安装
 
 要安装所需的依赖项，请运行以下命令：
